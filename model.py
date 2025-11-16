@@ -411,4 +411,156 @@ class Encoder(nn.Module):
 
         return self.norm(x)
 
+class DecoderBlock(nn.Module):
+    """
+    A single decoder block in the Transformer architecture.
+
+    Implements one layer of the decoder stack, consisting of three sub-layers:
+    1. Multi-head self-attention with residual connection and layer normalization (masked)
+    2. Multi-head cross-attention with residual connection and layer normalization
+    3. Position-wise feed-forward network with residual connection and layer normalization
+
+    The decoder block processes target sequences while attending to both the target
+    sequence (masked self-attention) and the encoder output (cross-attention), enabling
+    the model to generate output sequences based on the encoded source.
+
+    Args:
+        self_attention_block (MultiHeadAttentionBlock): The multi-head self-attention module
+                                                        (masked to prevent future information leakage).
+        cross_attention_block (MultiHeadAttentionBlock): The multi-head cross-attention module
+                                                         that attends to encoder output.
+        feed_forward_block (FeedForwardBlock): The position-wise feed-forward network module.
+        dropout (float): Dropout probability applied in residual connections.
+    """
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        """
+        Initialize the DecoderBlock module.
+
+        Args:
+            self_attention_block (MultiHeadAttentionBlock): Masked self-attention module.
+            cross_attention_block (MultiHeadAttentionBlock): Cross-attention module.
+            feed_forward_block (FeedForwardBlock): Feed-forward network module.
+            dropout (float): Dropout probability for residual connections.
+        """
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.cross_attention_block = cross_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
+
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Applies the decoder block transformations to the input.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, tgt_seq_len, d_model).
+            encoder_output (Tensor): Output from the encoder stack, shape (batch_size, src_seq_len, d_model).
+            src_mask (Tensor or None): Source mask tensor to prevent attention to certain source positions,
+                                       shape broadcastable to (batch_size, 1, 1, src_seq_len).
+            tgt_mask (Tensor or None): Target mask tensor to prevent attention to future positions (causal mask),
+                                       shape broadcastable to (batch_size, 1, tgt_seq_len, tgt_seq_len).
+
+        Returns:
+            Tensor: Output tensor of shape (batch_size, tgt_seq_len, d_model) after applying
+                   self-attention, cross-attention, and feed-forward transformations with residual connections.
+        """
+        x  = self.residual_connections[0](x, lambda x: self.self_attention_block(x,x,x,tgt_mask))
+        x = self.residual_connections[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
+        x = self.residual_connections[2](x, self.feed_forward_block)
+        return x
+
+class Decoder(nn.Module):
+    """
+    The complete decoder stack of the Transformer architecture.
+
+    Comprises multiple decoder blocks stacked together, where each block processes
+    the target sequence through masked self-attention, cross-attention (attending to
+    encoder output), and feed-forward networks with residual connections. The decoder
+    generates output sequences by attending to both the target sequence (with masking)
+    and the encoded source sequence.
+
+    Args:
+        layers (nn.ModuleList): A list of DecoderBlock modules. Typically contains N blocks
+                                (N=6 in the original paper).
+
+    Attributes:
+        layers (nn.ModuleList): Stack of decoder blocks.
+        norm (LayerNormalization): Final layer normalization applied after all blocks.
+    """
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        """
+        Initialize the Decoder module.
+
+        Args:
+            layers (nn.ModuleList): A ModuleList containing DecoderBlock instances.
+                                   Typically N blocks where N=6 in the original paper.
+        """
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Processes the input through all decoder blocks.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, tgt_seq_len, d_model).
+            encoder_output (Tensor): Output from the encoder stack, shape (batch_size, src_seq_len, d_model).
+            src_mask (Tensor or None): Source mask tensor to prevent attention to certain source positions,
+                                       shape broadcastable to (batch_size, 1, 1, src_seq_len).
+            tgt_mask (Tensor or None): Target mask tensor to prevent attention to future positions (causal mask),
+                                       shape broadcastable to (batch_size, 1, tgt_seq_len, tgt_seq_len).
+
+        Returns:
+            Tensor: Decoded output tensor of shape (batch_size, tgt_seq_len, d_model) after
+                   passing through all decoder blocks and final layer normalization.
+        """
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
+        return self.norm(x)
+
+
+class ProjectionLayer(nn.Module):
+    """
+    Final projection layer that maps decoder output to vocabulary log probabilities.
+
+    Projects the decoder's output from the model dimension (d_model) to the vocabulary size,
+    and applies log_softmax to compute log probabilities over the vocabulary for each position.
+    This layer produces the final output probabilities used for token prediction during generation.
+
+    Args:
+        d_model (int): The dimensionality of the model's hidden states.
+        vocab_size (int): The size of the vocabulary (number of tokens).
+
+    Attributes:
+        proj (nn.Linear): Linear layer that projects from d_model to vocab_size.
+    """
+
+    def __init__(self, d_model: int, vocab_size: int) -> None:
+        """
+        Initialize the ProjectionLayer module.
+
+        Args:
+            d_model (int): The dimensionality of the input features (hidden states).
+            vocab_size (int): The size of the output vocabulary.
+        """
+        super().__init__()
+        self.proj = nn.Linear(d_model, vocab_size) # Mapping the feature dim back to number from vocab list
+
+    def forward(self, x):
+        """
+        Projects the input to vocabulary log probabilities.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model).
+
+        Returns:
+            Tensor: Log probabilities over the vocabulary for each position,
+                   shape (batch_size, seq_len, vocab_size).
+        """
+        # (batch, seq_len, d_model) --> (batch, seq_len, vocab_size)
+        return torch.log_softmax(self.proj(x), dim= -1) # Getting probab of next token for each input token for all vocab
 

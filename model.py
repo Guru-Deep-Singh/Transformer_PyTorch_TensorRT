@@ -123,4 +123,40 @@ class LayerNormalization(nn.Module):
         return self.alpha * (x - mean) / (std + self.eps) + self.bias
 
 
+class FeedForwardBlock(nn.Module):
+    """
+    Implements the Position-wise Feed Forward block used in Transformer architectures.
+
+    This block consists of two linear transformations with a ReLU activation and a dropout layer in between.
+    It is applied independently to each position (token) in the sequence.
+    """
+
+    def __init__(self, d_model: int, d_ff: int, dropout: float) -> None:
+        """
+        Args:
+            d_model (int): The dimension of the embedding/hidden state.
+            d_ff (int): The dimension of the feed-forward network's inner layer.
+            dropout (float): Dropout probability applied after the activation.
+        """
+        super().__init__()
+        self.linear_1 = nn.Linear(d_model, d_ff) # W1 and B1
+        self.dropout = nn.Dropout(dropout)
+        self.linear_2 = nn.Linear(d_ff, d_model) # W2 and B2
+
+    def forward(self, x):
+        """
+        Applies position-wise feed-forward transformation to the input.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model).
+
+        Returns:
+            Tensor: Output tensor of shape (batch_size, seq_len, d_model).
+        
+        The transformation flow:
+            (batch, seq_len, d_model) --(linear 1)--> (batch, seq_len, d_ff) 
+            --(linear 2)--> (batch, seq_len, d_model)
+        """
+        return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
+
 

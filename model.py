@@ -564,3 +564,170 @@ class ProjectionLayer(nn.Module):
         # (batch, seq_len, d_model) --> (batch, seq_len, vocab_size)
         return torch.log_softmax(self.proj(x), dim= -1) # Getting probab of next token for each input token for all vocab
 
+
+class Transformer(nn.Module):
+    """
+    Complete Transformer model as described in "Attention Is All You Need".
+
+    Combines the encoder, decoder, input embeddings, positional encodings, and projection layer
+    to form the complete sequence-to-sequence transformer architecture. The model processes
+    source sequences through the encoder and generates target sequences using the decoder,
+    with both components using multi-head attention mechanisms.
+
+    Args:
+        encoder (Encoder): The encoder stack that processes source sequences.
+        decoder (Decoder): The decoder stack that generates target sequences.
+        src_embed (InputEmbeddings): Source sequence embedding layer.
+        tgt_embed (InputEmbeddings): Target sequence embedding layer.
+        src_pos (PositionalEncoding): Source positional encoding layer.
+        tgt_pos (PositionalEncoding): Target positional encoding layer.
+        projection_layer (ProjectionLayer): Final projection layer mapping to vocabulary.
+
+    Attributes:
+        encoder (Encoder): The encoder module.
+        decoder (Decoder): The decoder module.
+        src_embed (InputEmbeddings): Source embedding layer.
+        tgt_embed (InputEmbeddings): Target embedding layer.
+        src_pos (PositionalEncoding): Source positional encoding layer.
+        tgt_pos (PositionalEncoding): Target positional encoding layer.
+        projection_layer (ProjectionLayer): Vocabulary projection layer.
+    """
+
+    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbeddings, tgt_embed: InputEmbeddings, src_pos: PositionalEncoding, tgt_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+        """
+        Initialize the Transformer model.
+
+        Args:
+            encoder (Encoder): The encoder stack module.
+            decoder (Decoder): The decoder stack module.
+            src_embed (InputEmbeddings): Source sequence embedding layer.
+            tgt_embed (InputEmbeddings): Target sequence embedding layer.
+            src_pos (PositionalEncoding): Source positional encoding layer.
+            tgt_pos (PositionalEncoding): Target positional encoding layer.
+            projection_layer (ProjectionLayer): Final projection layer to vocabulary.
+        """
+        super().__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.src_embed = src_embed
+        self.tgt_embed = tgt_embed
+        self.src_pos = src_pos
+        self.tgt_pos = tgt_pos
+        self.projection_layer = projection_layer
+
+    def encode(self, src, src_mask):
+        """
+        Encodes the source sequence.
+
+        Args:
+            src (Tensor): Source token indices, shape (batch_size, src_seq_len).
+            src_mask (Tensor or None): Source mask tensor to prevent attention to certain positions,
+                                     shape broadcastable to (batch_size, 1, src_seq_len, src_seq_len).
+
+        Returns:
+            Tensor: Encoded source sequence, shape (batch_size, src_seq_len, d_model).
+        """
+        src = self.src_embed(src)
+        src = self.src_pos(src)
+        return self.encoder(src, src_mask)
+
+    def decode(self, encoder_output, src_mask, tgt, tgt_mask):
+        """
+        Decodes the target sequence using encoder output.
+
+        Args:
+            encoder_output (Tensor): Output from the encoder, shape (batch_size, src_seq_len, d_model).
+            src_mask (Tensor or None): Source mask tensor, shape broadcastable to (batch_size, 1, 1, src_seq_len).
+            tgt (Tensor): Target token indices, shape (batch_size, tgt_seq_len).
+            tgt_mask (Tensor or None): Target mask tensor (causal mask), 
+                                      shape broadcastable to (batch_size, 1, tgt_seq_len, tgt_seq_len).
+
+        Returns:
+            Tensor: Decoded target sequence, shape (batch_size, tgt_seq_len, d_model).
+        """
+        tgt = self.tgt_embed(tgt)
+        tgt = self.tgt_pos(tgt)
+        return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+
+    def project(self, x):
+        """
+        Projects decoder output to vocabulary log probabilities.
+
+        Args:
+            x (Tensor): Decoder output tensor, shape (batch_size, tgt_seq_len, d_model).
+
+        Returns:
+            Tensor: Log probabilities over vocabulary, shape (batch_size, tgt_seq_len, vocab_size).
+        """
+        return self.projection_layer(x)
+
+
+def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
+    """
+    Builds and initializes a complete Transformer model.
+
+    Constructs a transformer model with the specified architecture parameters,
+    creates all necessary components (encoder, decoder, embeddings, positional encodings,
+    and projection layer), and initializes the parameters using Xavier uniform initialization.
+
+    Args:
+        src_vocab_size (int): Size of the source vocabulary.
+        tgt_vocab_size (int): Size of the target vocabulary.
+        src_seq_len (int): Maximum length of source sequences.
+        tgt_seq_len (int): Maximum length of target sequences.
+        d_model (int, optional): Dimension of the model (default: 512).
+        N (int, optional): Number of encoder and decoder blocks (default: 6).
+        h (int, optional): Number of attention heads (default: 8).
+        dropout (float, optional): Dropout probability (default: 0.1).
+        d_ff (int, optional): Dimension of the feed-forward network's inner layer (default: 2048).
+
+    Returns:
+        Transformer: A fully initialized Transformer model ready for training or inference.
+
+    Note:
+        All parameters with dimensions greater than 1 are initialized using Xavier uniform
+        initialization as recommended in the original paper.
+    """
+    # Create embedding layers
+    src_embed = InputEmbeddings(d_model, src_vocab_size)
+    tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
+
+    # Create positional encoding layers
+    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
+    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout) # If the src and tgt seq len is same then we can use only one pos layer for both
+
+    # Create Encoder blocks
+    encoder_blocks = []
+    for _ in range(N):
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)
+        encoder_blocks.append(encoder_block)
+
+    # Create Decoder blocks
+    decoder_blocks = []
+    for _ in range(N):
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+        decoder_feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+        decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, decoder_feed_forward_block, dropout)
+        decoder_blocks.append(decoder_block)
+
+    # Create the encoder and the decoder
+    encoder = Encoder(nn.ModuleList(encoder_blocks))
+    decoder = Decoder(nn.ModuleList(decoder_blocks))
+
+    # Create the projection layer
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+
+    # Create the transformer
+    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+
+    # Initialize the param with Xavier Uniform
+    for p in transformer.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform_(p)
+
+    return transformer
+
+

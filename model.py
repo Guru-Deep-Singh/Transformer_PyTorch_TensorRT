@@ -160,7 +160,7 @@ class FeedForwardBlock(nn.Module):
         return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
 
     
-class MultiHeadAttention(nn.Module):
+class MultiHeadAttentionBlock(nn.Module):
     """
     Implements Multi-Head Attention mechanism as described in "Attention Is All You Need".
 
@@ -220,7 +220,7 @@ class MultiHeadAttention(nn.Module):
 
     def __init__(self, d_model: int, h: int, dropout: float) -> None:
         """
-        Initializes the MultiHeadAttention module.
+        Initializes the MultiHeadAttentionBlock module.
 
         Args:
             d_model (int): Total dimension of the model (input/output features).
@@ -264,12 +264,151 @@ class MultiHeadAttention(nn.Module):
         key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1,2)
         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1,2)
 
-        x, self.attention_scores = MultiHeadAttention.attention(query, key, value, mask, self.dropout)
+        x, self.attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
         
         #(batch, h, seq_len, d_k) --> (batch, seq_len, h, d_k) --> (batch, seq_len, d_model)
         x = x.transpose(1,2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
 
         # (batch, seq_len, d_model) --> (batch,  seq_len, d_model)
         return self.w_o(x)
+
+
+class ResidualConnection(nn.Module):
+    """
+    Implements a residual connection followed by layer normalization and dropout.
+
+    The residual connection is applied as: 
+    y = x + Dropout(Sublayer(LayerNorm(x)))
+    This helps stabilize training of deep transformer models by allowing gradients 
+    to flow directly through the network. The normalization also helps to 
+    stabilize the activations within the network.
+
+    Args:
+        dropout (float): Dropout probability to use after the sublayer.
+
+    Attributes:
+        dropout (nn.Dropout): Dropout layer applied after the sublayer.
+        norm (LayerNormalization): Layer normalization applied before the sublayer.
+    """
+
+    def __init__(self, dropout: float) -> None:
+        """
+        Initialize the ResidualConnection module.
+
+        Args:
+            dropout (float): The dropout probability to apply after the sublayer transformation.
+        """
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.norm = LayerNormalization()
+
+    def forward(self, x, sublayer):
+        """
+        Applies residual connection, layer normalization, the given sublayer, and dropout.
+
+        Args:
+            x (Tensor): The input tensor.
+            sublayer (Callable[[Tensor], Tensor]): The sublayer (e.g. attention or feed-forward network) 
+                                                    to apply to the normalized input.
+
+        Returns:
+            Tensor: The output tensor after applying residual connection, normalization, sublayer, and dropout.
+        """
+        # Note: we are first applying norm then feed it to sublayer
+        # Some implementation do norm on the output of sublayer i.e. self.norm(sublayer(x))
+        return x + self.dropout(sublayer(self.norm(x)))
+
+
+class EncoderBlock(nn.Module):
+    """
+    A single encoder block in the Transformer architecture.
+
+    Implements one layer of the encoder stack, consisting of:
+    1. Multi-head self-attention with residual connection and layer normalization
+    2. Position-wise feed-forward network with residual connection and layer normalization
+
+    The encoder block processes input sequences by allowing each position to attend
+    to all positions in the previous layer, enabling the model to capture dependencies
+    and relationships within the input sequence.
+
+    Args:
+        self_attention_block (MultiHeadAttentionBlock): The multi-head self-attention module.
+        feed_forward_block (FeedForwardBlock): The position-wise feed-forward network module.
+        dropout (float): Dropout probability applied in residual connections.
+    """
+
+    def __init__(self, self_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+        super().__init__()
+
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList(ResidualConnection(dropout) for _ in range(2)) # List of 2 ResidualConnections
+
+    def forward(self, x, src_mask):
+        """
+        Applies the encoder block transformations to the input.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model).
+            src_mask (Tensor or None): Source mask tensor to prevent attention to certain positions,
+                                      shape broadcastable to (batch_size, 1, seq_len, seq_len).
+
+        Returns:
+            Tensor: Output tensor of shape (batch_size, seq_len, d_model) after applying
+                   self-attention and feed-forward transformations with residual connections.
+        """
+        # Here the lambda creates a wrapper function which allows self_attention_block to be called
+        # as sublayer(x) as needed inside the ResidualConnection.forward function.
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
+        x = self.residual_connections[1](x, self.feed_forward_block)
+        return x
+
+class Encoder(nn.Module):
+    """
+    The complete encoder stack of the Transformer architecture.
+
+    Comprises multiple encoder blocks stacked together, where each block processes
+    the input sequence through self-attention and feed-forward networks with residual
+    connections. The encoder transforms input sequences into contextualized representations
+    that capture dependencies within the source sequence.
+
+    Args:
+        layers (nn.ModuleList): A list of EncoderBlock modules. Typically contains N blocks
+                                (N=6 in the original paper).
+
+    Attributes:
+        layers (nn.ModuleList): Stack of encoder blocks.
+        norm (LayerNormalization): Final layer normalization applied after all blocks.
+    """
+
+    def __init__(self, layers: nn.ModuleList) -> None:
+        """
+        Initialize the Encoder module.
+
+        Args:
+            layers (nn.ModuleList): A ModuleList containing EncoderBlock instances.
+                                   Typically N blocks where N=6 in the original paper.
+        """
+        super().__init__()
+        self.layers = layers # Here the ModuleList will have EncoderBlocks x N where N = 6 in paper
+        self.norm = LayerNormalization()
+
+    def forward(self, x, mask):
+        """
+        Processes the input through all encoder blocks.
+
+        Args:
+            x (Tensor): Input tensor of shape (batch_size, seq_len, d_model).
+            mask (Tensor or None): Source mask tensor to prevent attention to certain positions,
+                                   shape broadcastable to (batch_size, 1, seq_len, seq_len).
+
+        Returns:
+            Tensor: Encoded output tensor of shape (batch_size, seq_len, d_model) after
+                   passing through all encoder blocks and final layer normalization.
+        """
+        for layer in self.layers:
+            x = layer(x, mask)
+
+        return self.norm(x)
 
 

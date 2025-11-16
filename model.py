@@ -159,4 +159,117 @@ class FeedForwardBlock(nn.Module):
         """
         return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
 
+    
+class MultiHeadAttention(nn.Module):
+    """
+    Implements Multi-Head Attention mechanism as described in "Attention Is All You Need".
+
+    This module computes scaled dot-product attention across multiple heads in parallel,
+    enabling the model to jointly attend to information from different representation subspaces at different positions.
+
+    Args:
+        d_model (int): The dimensionality of the input and output features.
+        h (int): Number of attention heads.
+        dropout (float): Dropout probability applied to the attention scores.
+
+    Attributes:
+        w_q (nn.Linear): Linear layer to project input queries to the attention space.
+        w_k (nn.Linear): Linear layer to project input keys to the attention space.
+        w_v (nn.Linear): Linear layer to project input values to the attention space.
+        w_o (nn.Linear): Linear layer to project concatenated output of all heads back to d_model.
+        dropout (nn.Dropout): Dropout layer for regularizing attention weights.
+        d_k (int): Dimensionality of each attention head.
+        h (int): Number of attention heads.
+        d_model (int): Input/output feature dimension.
+    """
+
+    @staticmethod
+    def attention(query, key, value, mask, dropout: nn.Dropout):
+        """
+        Compute the scaled dot-product attention.
+
+        Args:
+            query (Tensor): Query tensor of shape (batch_size, h, seq_len, d_k).
+            key (Tensor): Key tensor of shape (batch_size, h, seq_len, d_k).
+            value (Tensor): Value tensor of shape (batch_size, h, seq_len, d_k).
+            mask (Tensor or None): Mask tensor that prevents attention to certain positions, shape broadcastable to (batch_size, 1, seq_len, seq_len).
+            dropout (nn.Dropout): Dropout layer applied to the attention scores.
+
+        Returns:
+            Tuple[Tensor, Tensor]:
+                - Output: Attention-weighted values, shape (batch_size, h, seq_len, d_k).
+                - Attention Scores: The attention weights after softmax, same shape as the attention matrix.
+        """
+        d_k = query.shape[-1]
+
+        #(batch, h, seq_len, d_k) X (batch, h, d_k, seq_len) = (batch, h, seq_len, seq_len)
+        # Matrix (seq_len, seq_len) represents the attention between the tokens
+        attention_scores = (query @ key.transpose(-2,-1)) / math.sqrt(d_k)
+        
+        # We need to apply mask before softmax so that wherever the mask value is 0 we put -1e9 in attention
+        # thus the softmax will result in 0 i.e. no attention between the tokens
+        if mask is not None:
+            attention_scores.masked_fill_(mask == 0, -1e9)
+
+        atten_scores = attention_scores.softmax(dim = -1) # (batch, h, seq_len, seq_len)
+        if dropout is not None:
+            attention_scores = dropout(attention_scores)
+
+        #(batch, h, seq_len, seq_len) X (batch, h, seq_len, d_k) = (batch, h, seq_len, d_k)
+        return (attention_scores @ value), attention_scores # we are returning the attention_scores just for visu
+
+    def __init__(self, d_model: int, h: int, dropout: float) -> None:
+        """
+        Initializes the MultiHeadAttention module.
+
+        Args:
+            d_model (int): Total dimension of the model (input/output features).
+            h (int): Number of attention heads.
+            dropout (float): Dropout probability.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.h = h # Number of head
+        assert d_model % h == 0, "d_model is not divisible by h"
+
+        self.d_k = d_model // h # Dimension of features per head
+        self.w_q = nn.Linear(d_model, d_model) # Wq (Query)
+        self.w_k = nn.Linear(d_model, d_model) # Wk (Key)
+        self.w_v = nn.Linear(d_model, d_model) # Wv (Value)
+
+        self.w_o = nn.Linear(d_model, d_model) # Wo (Output)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, q, k, v, mask):
+        """
+        Applies multi-head attention mechanism to the input.
+
+        Args:
+            q (Tensor): Query tensor of shape (batch_size, seq_len, d_model).
+            k (Tensor): Key tensor of shape (batch_size, seq_len, d_model).
+            v (Tensor): Value tensor of shape (batch_size, seq_len, d_model).
+            mask (Tensor or None): Mask tensor to prevent attention to certain positions, 
+                                   shape broadcastable to (batch_size, 1, seq_len, seq_len).
+
+        Returns:
+            Tensor: The result of multi-head attention, shape (batch_size, seq_len, d_model).
+        """
+        query = self.w_q(q) #(batch, seq_len, d_model) --> (batch, seq_len, d_model)
+        key = self.w_k(k) #(batch, seq_len, d_model) --> (batch, seq_len, d_model)
+        value = self.w_v(v) #(batch, seq_len, d_model) --> (batch, seq_len, d_model)
+
+        # (batch, seq_len, d_model) --> (batch, seq_len, h, d_k) --> (batch, h, seq_len, d_k)
+        # The transpose is done to get mini batches i.e. heads i.e. group of features per token or sequence
+        query = query.view(query.shape[0], query.shape[1], self.h, self.d_k).transpose(1,2)
+        key = key.view(key.shape[0], key.shape[1], self.h, self.d_k).transpose(1,2)
+        value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1,2)
+
+        x, self.attention_scores = MultiHeadAttention.attention(query, key, value, mask, self.dropout)
+        
+        #(batch, h, seq_len, d_k) --> (batch, seq_len, h, d_k) --> (batch, seq_len, d_model)
+        x = x.transpose(1,2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
+
+        # (batch, seq_len, d_model) --> (batch,  seq_len, d_model)
+        return self.w_o(x)
+
 

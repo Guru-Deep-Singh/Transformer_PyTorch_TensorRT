@@ -17,7 +17,7 @@ def get_config():
             - lang_src (str): Source language code (default: "en").
             - lang_tgt (str): Target language code (default: "it").
             - model_folder (str): Directory name where model weights will be saved (default: "weights").
-            - model_basename (str): Base filename prefix for saved model weights (default: "tmodel_").
+            - model_basename (str): Base filename prefix for saved model weights (default: \"tmodel\_\).
             - preload (str or None): Path to a pre-trained model to load, or None if starting from scratch.
             - tokenizer_file (str): Filename pattern for the tokenizer JSON file.
             - experiment_name (str): Directory path for experiment tracking/logging (default: "runs/tmodel").

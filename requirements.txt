@@ -1,13 +1,48 @@
+# ------------------------------
+# Core PyTorch (Jetson wheels)
+# ------------------------------
 torch==2.8.0 --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 torchvision==0.23.0 --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 torchaudio==2.8.0 --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
-#Numpy 1. to avoid warnings from torch
-numpy==1.26.4
-# Self built wheel for torchtext for jetson
-./jetson_wheel/torchtext-0.18.0a0+9bed85d-cp310-cp310-linux_aarch64.whl
-datasets --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+# ------------------------------
+# Numpy ABI (MUST MATCH system NumPy 1.21.5)
+# Do NOT use numpy>=1.22 on Jetson unless you rebuild everything.
+# ------------------------------
+numpy==1.21.5
+
+# ------------------------------
+# pandas + pyarrow (Jetson-safe)
+# Must match NumPy ABI
+# ------------------------------
+pandas==1.3.5
+pyarrow==8.0.0
+
+# ------------------------------
+# HuggingFace stack (compatible versions)
+# datasets==2.14.6 removes the old pyarrow>=21.0 requirement.
+# huggingface_hub==0.16.4 contains HfFolder (required).
+# ------------------------------
+datasets==2.14.6
+huggingface_hub==0.16.4
 tokenizers --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+
+# ------------------------------
+# torchtext (custom Jetson wheel)
+# ------------------------------
+./jetson_wheel/torchtext-0.18.0a0+9bed85d-cp310-cp310-linux_aarch64.whl
+
+# ------------------------------
+# torchmetrics + matplotlib pairing
+# Fixes backend import errors
+# ------------------------------
 torchmetrics --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+matplotlib==3.5.3
+matplotlib-inline==0.1.6
+
+# ------------------------------
+# Visualization / Logging
+# ------------------------------
 tensorboard --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 altair --index-url https://pypi.jetson-ai-lab.io/jp6/cu126
 wandb --index-url https://pypi.jetson-ai-lab.io/jp6/cu126

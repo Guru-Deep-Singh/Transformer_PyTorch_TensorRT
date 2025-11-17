@@ -80,21 +80,23 @@ class PositionalEncoding(nn.Module):
 
 class LayerNormalization(nn.Module):
     """
-    Applies Layer Normalization over a mini-batch of inputs.
+    Applies Layer Normalization over a mini-batch of inputs with per-feature parameters.
 
     This module normalizes the input tensor across the features dimension for each position in each batch,
-    ensuring zero mean and unit variance, and then applies learnable scaling (alpha) and shifting (bias) parameters.
+    ensuring zero mean and unit variance, and then applies learnable scaling (alpha) and shifting (bias) parameters
+    sized to the `features` dimension passed at construction time.
     """
 
-    def __init__(self, eps: float = 10**-6) -> None:
+    def __init__(self, features:int, eps: float = 10**-6) -> None:
         """
         Args:
+            features (int): Number of features per token; controls the size of the learnable scale/bias vectors.
             eps (float, optional): A small value added to the denominator for numerical stability (default: 1e-6).
         """
         super().__init__()
         self.eps = eps # For preventing division by zero
-        self.alpha =nn.Parameter(torch.ones(1)) # Multiplied for scaling
-        self.bias = nn.Parameter(torch.zeros(1)) # Added for scaling 
+        self.alpha =nn.Parameter(torch.ones(features)) # Multiplied for scaling
+        self.bias = nn.Parameter(torch.zeros(features)) # Added for scaling 
 
     def forward(self, x):
         """
@@ -119,8 +121,8 @@ class LayerNormalization(nn.Module):
         #
         #Output: (2, 100, 1) (keepdim=True foreced the shape as (2,100,1) instead of (2,100) for broadcasting)
 
-        std = x.std(dim=-1, keepdim=True)
-        return self.alpha * (x - mean) / (std + self.eps) + self.bias
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        return self.alpha * (x - mean) / torch.sqrt(var + self.eps) + self.bias
 
 
 class FeedForwardBlock(nn.Module):
@@ -211,7 +213,7 @@ class MultiHeadAttentionBlock(nn.Module):
         if mask is not None:
             attention_scores.masked_fill_(mask == 0, -1e9)
 
-        atten_scores = attention_scores.softmax(dim = -1) # (batch, h, seq_len, seq_len)
+        attention_scores = attention_scores.softmax(dim = -1) # (batch, h, seq_len, seq_len)
         if dropout is not None:
             attention_scores = dropout(attention_scores)
 
@@ -233,11 +235,11 @@ class MultiHeadAttentionBlock(nn.Module):
         assert d_model % h == 0, "d_model is not divisible by h"
 
         self.d_k = d_model // h # Dimension of features per head
-        self.w_q = nn.Linear(d_model, d_model) # Wq (Query)
-        self.w_k = nn.Linear(d_model, d_model) # Wk (Key)
-        self.w_v = nn.Linear(d_model, d_model) # Wv (Value)
+        self.w_q = nn.Linear(d_model, d_model, bias=False) # Wq (Query)
+        self.w_k = nn.Linear(d_model, d_model, bias=False) # Wk (Key)
+        self.w_v = nn.Linear(d_model, d_model, bias=False) # Wv (Value)
 
-        self.w_o = nn.Linear(d_model, d_model) # Wo (Output)
+        self.w_o = nn.Linear(d_model, d_model, bias=False) # Wo (Output)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, q, k, v, mask):
@@ -284,6 +286,7 @@ class ResidualConnection(nn.Module):
     stabilize the activations within the network.
 
     Args:
+        features (int): Feature dimension passed to the internal LayerNormalization.
         dropout (float): Dropout probability to use after the sublayer.
 
     Attributes:
@@ -291,16 +294,17 @@ class ResidualConnection(nn.Module):
         norm (LayerNormalization): Layer normalization applied before the sublayer.
     """
 
-    def __init__(self, dropout: float) -> None:
+    def __init__(self, features:int, dropout: float) -> None:
         """
         Initialize the ResidualConnection module.
 
         Args:
+            features (int): Size of the token features used by the associated layer norm.
             dropout (float): The dropout probability to apply after the sublayer transformation.
         """
         super().__init__()
         self.dropout = nn.Dropout(dropout)
-        self.norm = LayerNormalization()
+        self.norm = LayerNormalization(features)
 
     def forward(self, x, sublayer):
         """
@@ -332,17 +336,18 @@ class EncoderBlock(nn.Module):
     and relationships within the input sequence.
 
     Args:
+        features (int): Feature dimension used by the contained residual connections.
         self_attention_block (MultiHeadAttentionBlock): The multi-head self-attention module.
         feed_forward_block (FeedForwardBlock): The position-wise feed-forward network module.
         dropout (float): Dropout probability applied in residual connections.
     """
 
-    def __init__(self, self_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+    def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
 
         self.self_attention_block = self_attention_block
         self.feed_forward_block = feed_forward_block
-        self.residual_connections = nn.ModuleList(ResidualConnection(dropout) for _ in range(2)) # List of 2 ResidualConnections
+        self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(2)]) # List of 2 ResidualConnections
 
     def forward(self, x, src_mask):
         """
@@ -373,6 +378,7 @@ class Encoder(nn.Module):
     that capture dependencies within the source sequence.
 
     Args:
+        features (int): Feature dimension consumed by the final layer normalization.
         layers (nn.ModuleList): A list of EncoderBlock modules. Typically contains N blocks
                                 (N=6 in the original paper).
 
@@ -381,17 +387,18 @@ class Encoder(nn.Module):
         norm (LayerNormalization): Final layer normalization applied after all blocks.
     """
 
-    def __init__(self, layers: nn.ModuleList) -> None:
+    def __init__(self, features:int, layers: nn.ModuleList) -> None:
         """
         Initialize the Encoder module.
 
         Args:
+            features (int): Model dimension used to size the terminal LayerNormalization.
             layers (nn.ModuleList): A ModuleList containing EncoderBlock instances.
                                    Typically N blocks where N=6 in the original paper.
         """
         super().__init__()
         self.layers = layers # Here the ModuleList will have EncoderBlocks x N where N = 6 in paper
-        self.norm = LayerNormalization()
+        self.norm = LayerNormalization(features)
 
     def forward(self, x, mask):
         """
@@ -425,6 +432,7 @@ class DecoderBlock(nn.Module):
     the model to generate output sequences based on the encoded source.
 
     Args:
+        features (int): Feature dimension provided to the residual connections.
         self_attention_block (MultiHeadAttentionBlock): The multi-head self-attention module
                                                         (masked to prevent future information leakage).
         cross_attention_block (MultiHeadAttentionBlock): The multi-head cross-attention module
@@ -433,11 +441,12 @@ class DecoderBlock(nn.Module):
         dropout (float): Dropout probability applied in residual connections.
     """
 
-    def __init__(self, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
+    def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock, cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         """
         Initialize the DecoderBlock module.
 
         Args:
+            features (int): Model dimension used for all internal layer norms.
             self_attention_block (MultiHeadAttentionBlock): Masked self-attention module.
             cross_attention_block (MultiHeadAttentionBlock): Cross-attention module.
             feed_forward_block (FeedForwardBlock): Feed-forward network module.
@@ -447,7 +456,7 @@ class DecoderBlock(nn.Module):
         self.self_attention_block = self_attention_block
         self.cross_attention_block = cross_attention_block
         self.feed_forward_block = feed_forward_block
-        self.residual_connections = nn.ModuleList([ResidualConnection(dropout) for _ in range(3)])
+        self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(3)])
 
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
@@ -482,6 +491,7 @@ class Decoder(nn.Module):
     and the encoded source sequence.
 
     Args:
+        features (int): Feature dimension provided to the final layer normalization.
         layers (nn.ModuleList): A list of DecoderBlock modules. Typically contains N blocks
                                 (N=6 in the original paper).
 
@@ -490,17 +500,18 @@ class Decoder(nn.Module):
         norm (LayerNormalization): Final layer normalization applied after all blocks.
     """
 
-    def __init__(self, layers: nn.ModuleList) -> None:
+    def __init__(self, features:int, layers: nn.ModuleList) -> None:
         """
         Initialize the Decoder module.
 
         Args:
+            features (int): Model dimension used to size the terminal LayerNormalization.
             layers (nn.ModuleList): A ModuleList containing DecoderBlock instances.
                                    Typically N blocks where N=6 in the original paper.
         """
         super().__init__()
         self.layers = layers
-        self.norm = LayerNormalization()
+        self.norm = LayerNormalization(features)
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
         """
@@ -525,11 +536,11 @@ class Decoder(nn.Module):
 
 class ProjectionLayer(nn.Module):
     """
-    Final projection layer that maps decoder output to vocabulary log probabilities.
+    Final projection layer that maps decoder output to vocabulary logits.
 
     Projects the decoder's output from the model dimension (d_model) to the vocabulary size,
-    and applies log_softmax to compute log probabilities over the vocabulary for each position.
-    This layer produces the final output probabilities used for token prediction during generation.
+    and returns raw logits over the vocabulary for each position. Softmax can be applied externally
+    depending on the training or inference workflow.
 
     Args:
         d_model (int): The dimensionality of the model's hidden states.
@@ -552,17 +563,17 @@ class ProjectionLayer(nn.Module):
 
     def forward(self, x):
         """
-        Projects the input to vocabulary log probabilities.
+        Projects the input to vocabulary logits.
 
         Args:
             x (Tensor): Input tensor of shape (batch_size, seq_len, d_model).
 
         Returns:
-            Tensor: Log probabilities over the vocabulary for each position,
+            Tensor: Logits over the vocabulary for each position,
                    shape (batch_size, seq_len, vocab_size).
         """
         # (batch, seq_len, d_model) --> (batch, seq_len, vocab_size)
-        return torch.log_softmax(self.proj(x), dim= -1) # Getting probab of next token for each input token for all vocab
+        return self.proj(x) 
 
 
 class Transformer(nn.Module):
@@ -701,7 +712,7 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
     for _ in range(N):
         encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
-        encoder_block = EncoderBlock(encoder_self_attention_block, feed_forward_block, dropout)
+        encoder_block = EncoderBlock(d_model,encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
 
     # Create Decoder blocks
@@ -710,12 +721,12 @@ def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int
         decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
         decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
         decoder_feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
-        decoder_block = DecoderBlock(decoder_self_attention_block, decoder_cross_attention_block, decoder_feed_forward_block, dropout)
+        decoder_block = DecoderBlock(d_model,decoder_self_attention_block, decoder_cross_attention_block, decoder_feed_forward_block, dropout)
         decoder_blocks.append(decoder_block)
 
     # Create the encoder and the decoder
-    encoder = Encoder(nn.ModuleList(encoder_blocks))
-    decoder = Decoder(nn.ModuleList(decoder_blocks))
+    encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
+    decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
 
     # Create the projection layer
     projection_layer = ProjectionLayer(d_model, tgt_vocab_size)

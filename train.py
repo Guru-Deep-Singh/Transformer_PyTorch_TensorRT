@@ -125,32 +125,33 @@ def run_validation(model, validation_ds, tokenizer_src, tokenizer_tgt, max_len, 
 
             # Print on console (function given by tqdm to avoid any conflicts)
             print_msg('-'*console_width)
-            print_msg(f'SOURCE: {source_text}')
-            print_msg(f'TARGET: {target_text}')
-            print_msg(f'PREDICTED: {model_out_text}')
+            print_msg(f"{f'SOURCE: ':>12}{source_text}")
+            print_msg(f"{f'TARGET: ':>12}{target_text}")
+            print_msg(f"{f'PREDICTED: ':>12}{model_out_text}")
 
             if count == num_examples:
+                print_msg('-'*console_width)
                 break
 
-        if writer:
-            # Evaluate the character error rate
-            # Compute the char error rate 
-            metric = torchmetrics.CharErrorRate()
-            cer = metric(predicted, expected)
-            writer.add_scalar('validation cer', cer, global_step)
-            writer.flush()
+    if writer:
+        # Evaluate the character error rate
+        # Compute the char error rate 
+        metric = torchmetrics.CharErrorRate()
+        cer = metric(predicted, expected)
+        writer.add_scalar('validation cer', cer, global_step)
+        writer.flush()
 
-            # Compute the word error rate
-            metric = torchmetrics.WordErrorRate()
-            wer = metric(predicted, expected)
-            writer.add_scalar('validation wer', wer, global_step)
-            writer.flush()
+        # Compute the word error rate
+        metric = torchmetrics.WordErrorRate()
+        wer = metric(predicted, expected)
+        writer.add_scalar('validation wer', wer, global_step)
+        writer.flush()
 
-            # Compute the BLEU metric
-            metric = torchmetrics.BLEUScore()
-            bleu = metric(predicted, expected)
-            writer.add_scalar('validation BLEU', bleu, global_step)
-            writer.flush()
+        # Compute the BLEU metric
+        metric = torchmetrics.BLEUScore()
+        bleu = metric(predicted, expected)
+        writer.add_scalar('validation BLEU', bleu, global_step)
+        writer.flush()
 
 
 def get_all_sentences(ds, lang):
@@ -213,9 +214,11 @@ def get_ds(config):
         The dataset is split into 90% training and 10% validation.
         Also prints the maximum length of source and target sentences.
     """
-    ds_raw = load_dataset('opus_books', f'{config["lang_src"]}-{config["lang_tgt"]}', split='train')
+    #ds_raw = load_dataset(f"{config['datasource']}", f'{config["lang_src"]}-{config["lang_tgt"]}', split='train')
+    # For opus_books we have de-en not en-de thus we flipped 
+    ds_raw = load_dataset(f"{config['datasource']}", f'{config["lang_tgt"]}-{config["lang_src"]}', split='train')
 
-    # Build tokenizer
+    # Build tokenizers
     tokenizer_src = get_or_build_tokenizer(config, ds_raw, config['lang_src'])
     tokenizer_tgt = get_or_build_tokenizer(config, ds_raw, config['lang_tgt'])
 
@@ -227,18 +230,19 @@ def get_ds(config):
     train_ds = BilingualDataset(train_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
     val_ds = BilingualDataset(val_ds_raw, tokenizer_src, tokenizer_tgt, config['lang_src'], config['lang_tgt'], config['seq_len'])
 
+    # Find the maximum length of each sentence in the source and target sentence
     max_len_src = 0
     max_len_tgt = 0
 
     for item in ds_raw:
         src_ids = tokenizer_src.encode(item['translation'][config['lang_src']]).ids
         tgt_ids = tokenizer_tgt.encode(item['translation'][config['lang_tgt']]).ids
-
         max_len_src = max(max_len_src, len(src_ids))
         max_len_tgt = max(max_len_tgt, len(tgt_ids))
 
-    print(f'Max length of source sentences: {max_len_src}')
-    print(f'Max length of target sentences: {max_len_tgt}')
+    print(f'Max length of source sentence: {max_len_src}')
+    print(f'Max length of target sentence: {max_len_tgt}')
+    
 
     train_dataloader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True)
     val_dataloader = DataLoader(val_ds, batch_size=1, shuffle=True)
@@ -312,12 +316,11 @@ def train_model(config):
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
 
     for epoch in range(initial_epoch, config['num_epochs']):
-        
+        torch.cuda.empty_cache()
+        model.train()
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
 
         for batch in batch_iterator:
-            model.train()
-
             encoder_input = batch['encoder_input'].to(device) #(batch, seq_len)
             decoder_input = batch['decoder_input'].to(device) #(batch, seq_len)
             encoder_mask = batch['encoder_mask'].to(device) #(batch, 1,1,seq_len)
@@ -364,14 +367,3 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
     config = get_config()
     train_model(config)
-
-
-
-
-
-
-
-
-
-
-    

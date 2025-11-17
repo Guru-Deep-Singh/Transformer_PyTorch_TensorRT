@@ -26,14 +26,15 @@ def get_config():
         "batch_size": 8,
         "num_epochs": 20,
         "lr": 10**-4,
-        "seq_len": 350,
+        "seq_len": 512,
         "d_model": 512,
+        "datasource": 'opus_books',
         "lang_src": "en",
-        "lang_tgt": "it",
+        "lang_tgt": "de",
         "model_folder": "weights",
         "model_basename": "tmodel_",
         "preload": None,
-        "tokenizer_file": f"tokenizer_{0}.json",
+        "tokenizer_file": "tokenizer_{0}.json",
         "experiment_name": "runs/tmodel"
     }
 
@@ -60,3 +61,30 @@ def get_weights_file_path(config, epoch: str):
     model_basename = config['model_basename']
     model_filename = f"{model_basename}{epoch}.pt"
     return str(Path('.')/model_folder/model_filename)
+
+def latest_weights_file_path(config):
+    """
+    Finds the most recent model weights file in the specified model folder.
+
+    Looks for all model checkpoint files in the model directory matching the model basename 
+    pattern, sorts them, and returns the path to the latest (most recent) checkpoint file. 
+    Returns None if no checkpoint files are found.
+
+    Args:
+        config (dict): Configuration dictionary containing 'datasource', 'model_folder', and 'model_basename' keys.
+
+    Returns:
+        str or None: Path to the latest model weights file if available, otherwise None.
+
+    Example:
+        >>> config = {"datasource": "opus_books", "model_folder": "weights", "model_basename": "tmodel_"}
+        >>> latest_weights_file_path(config)
+        'opus_books_weights/tmodel_19.pt'
+    """
+    model_folder = f"{config['datasource']}_{config['model_folder']}"
+    model_filename = f"{config['model_basename']}*"
+    weights_files = list(Path(model_folder).glob(model_filename))
+    if len(weights_files) == 0:
+        return None
+    weights_files.sort()
+    return str(weights_files[-1])

@@ -307,10 +307,26 @@ def train_model(config):
     if config['preload']:
         model_filename = get_weights_file_path(config, config['preload'])
         print(f'Preloading model {model_filename}')
-        state = torch.load(model_filename)
-        initial_epoch = state['epoch'] + 1
-        optimizer.load_state_dict(state['optimizer_state_dict'])
-        global_step = state['global_step']
+        try:
+            # Clear CUDA cache before loading to avoid memory issues
+            torch.cuda.empty_cache()
+            # Load checkpoint with proper device mapping
+            state = torch.load(model_filename, map_location=device)
+            # Load model state dict
+            model.load_state_dict(state['model_state_dict'])
+            initial_epoch = state['epoch'] + 1
+            optimizer.load_state_dict(state['optimizer_state_dict'])
+            global_step = state['global_step']
+            # Clear cache again after loading
+            torch.cuda.empty_cache()
+            print(f'Successfully loaded checkpoint from epoch {state["epoch"]}')
+        except RuntimeError as e:
+            print(f'Error loading checkpoint: {e}')
+            print('This might be a CUDA memory issue. Try:')
+            print('1. Restarting the Python process to clear GPU memory')
+            print('2. Reducing batch_size in config.py')
+            print('3. Reducing seq_len in config.py')
+            raise
 
     # Forcing the loss function to ignore the loss from Padding tokens
     loss_fn = nn.CrossEntropyLoss(ignore_index=tokenizer_src.token_to_id('[PAD]'), label_smoothing=0.1).to(device)
@@ -352,6 +368,9 @@ def train_model(config):
 
         # Run validation after every epoch
         run_validation(model, val_dataloader, tokenizer_src, tokenizer_tgt, config['seq_len'], device, lambda msg: batch_iterator.write(msg), global_step, writer)
+        
+        # Clear cache after validation
+        torch.cuda.empty_cache()
 
         # Save the model for every epoch
         model_filename = get_weights_file_path(config, f'{epoch:02d}')
@@ -362,6 +381,9 @@ def train_model(config):
             'global_step': global_step
             },model_filename
         )
+        
+        # Clear cache after saving
+        torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     warnings.filterwarnings('ignore')

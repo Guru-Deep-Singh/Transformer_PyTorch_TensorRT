@@ -294,12 +294,10 @@ def train_model(config):
     Path(config['model_folder']).mkdir(parents=True, exist_ok=True)
 
     train_dataloader, val_dataloader, tokenizer_src, tokenizer_tgt = get_ds(config)
-    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size()).to(device)
+    model = get_model(config, tokenizer_src.get_vocab_size(), tokenizer_tgt.get_vocab_size())
 
     # Tensorboard for loss visu
     writer = SummaryWriter(config['experiment_name'])
-
-    optimizer = torch.optim.Adam(model.parameters(), lr= config['lr'], eps=1e-9)
 
     initial_epoch = 0
     global_step = 0
@@ -311,21 +309,27 @@ def train_model(config):
             # Clear CUDA cache before loading to avoid memory issues
             torch.cuda.empty_cache()
             # Load checkpoint with proper device mapping
-            state = torch.load(model_filename, map_location=device)
+            state = torch.load(model_filename, map_location='cpu')
             # Load model state dict
             model.load_state_dict(state['model_state_dict'])
             initial_epoch = state['epoch'] + 1
-            optimizer.load_state_dict(state['optimizer_state_dict'])
             global_step = state['global_step']
-            # Clear cache again after loading
-            torch.cuda.empty_cache()
+
             print(f'Successfully loaded checkpoint from epoch {state["epoch"]}')
         except RuntimeError as e:
             print(f'Error loading checkpoint: {e}')
-            print('This might be a CUDA memory issue. Try:')
-            print('1. Restarting the Python process to clear GPU memory')
-            print('2. Reducing batch_size in config.py')
-            print('3. Reducing seq_len in config.py')
+            raise
+    
+    # Put to GPU only after the checkpoint is loaded
+    model = model.to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr= config['lr'], eps=1e-9)
+    
+    if config['preload']:
+        try:
+            optimizer.load_state_dict(state['optimizer_state_dict'])
+        except RuntimeError as e:
+            print(f'Error loading checkpoint: {e}')
             raise
 
     # Forcing the loss function to ignore the loss from Padding tokens

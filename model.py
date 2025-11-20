@@ -671,6 +671,24 @@ class Transformer(nn.Module):
             Tensor: Log probabilities over vocabulary, shape (batch_size, tgt_seq_len, vocab_size).
         """
         return self.projection_layer(x)
+        
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        """
+        Full forward pass: encode src, decode tgt, then project to logits.
+
+        Args:
+            src: (batch, src_seq_len) token ids
+            tgt: (batch, tgt_seq_len) token ids
+            src_mask: (batch, 1, src_seq_len, src_seq_len)
+            tgt_mask: (batch, 1, tgt_seq_len, tgt_seq_len)
+
+        Returns:
+            logits: (batch, tgt_seq_len, tgt_vocab_size)
+        """
+        enc = self.encode(src, src_mask)
+        dec = self.decode(enc, src_mask, tgt, tgt_mask)
+        logits = self.project(dec)
+        return logits
 
 
 def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512, N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:

@@ -340,4 +340,4 @@ The documentation includes:
 
 ---
 
-**Note**: This implementation was written while following the https://www.youtube.com/watch?v=ISNdQcPhsts&t=9840s video by Umar Jamil. All credits goes to him, the novelity of this repository is that the transformer was trained on Jetson Nano Super, therefore, the dependencies versions might vary and also there are subtle difference in LayerNormalization, etc. Moreover, the repository is very verbose containing comments and documentation. 
+**Note**: This implementation was written while following the https://www.youtube.com/watch?v=ISNdQcPhsts&t=9840s video by Umar Jamil. All credits goes to him, the novelity of this repository is that the transformer was trained on Jetson Nano Super, therefore, the dependencies versions might vary and also there are subtle difference in LayerNormalization, etc. The repository contains conversion of the exported ".pt" model to ONNX and also TensorRT and also provides benchmarking of inferencing with PyTorch vs TensorRT. Moreover, the repository is very verbose containing comments and documentation. 

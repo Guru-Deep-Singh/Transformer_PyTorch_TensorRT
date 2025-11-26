@@ -22,6 +22,7 @@ from pathlib import Path
 
 import warnings
 import torchmetrics
+import gc
 
 def greedy_decode(model, source, source_mask, tokenizer_src, tokenizer_tgt, max_len, device):
     """
@@ -301,7 +302,7 @@ def train_model(config):
 
     initial_epoch = 0
     global_step = 0
-
+    state = None 
     if config['preload']:
         model_filename = get_weights_file_path(config, config['preload'])
         print(f'Preloading model {model_filename}')
@@ -312,6 +313,10 @@ def train_model(config):
             state = torch.load(model_filename, map_location='cpu')
             # Load model state dict
             model.load_state_dict(state['model_state_dict'])
+
+            # Free up the space: needed for Jetson due to unified memory
+            del state['model_state_dict']
+
             initial_epoch = state['epoch'] + 1
             global_step = state['global_step']
 
@@ -328,6 +333,9 @@ def train_model(config):
     if config['preload']:
         try:
             optimizer.load_state_dict(state['optimizer_state_dict'])
+            # Delete the state
+            del state
+            gc.collect()
         except RuntimeError as e:
             print(f'Error loading checkpoint: {e}')
             raise
@@ -337,6 +345,7 @@ def train_model(config):
 
     for epoch in range(initial_epoch, config['num_epochs']):
         torch.cuda.empty_cache()
+        gc.collect()
         model.train()
         batch_iterator = tqdm(train_dataloader, desc=f"Processing epoch {epoch:02d}")
 

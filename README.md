@@ -303,6 +303,18 @@ The `Inference.ipynb` notebook provides an interactive environment for:
 - **Numerical accuracy**: Encoder output differences typically < 0.001
 - **Translation quality**: Both models should produce similar translations
 
+### Multi-GPU Performance Comparison
+
+The PyTorch Transformer model has been benchmarked across multiple GPU platforms. Below is a comparison table showing runtime performance and GPU specifications for each platform:
+
+| GPU        | Runtime Screenshot | GPU Details Screenshot |
+|------------|------------------|----------------------|
+| **MI300X** | ![MI300X Runtime](./images/rocm_runtime_pytorch.png) | ![MI300X Details](./images/amd_gpu_details.png) |
+| **Tesla T4**     | ![T4 Runtime](./images/tesla_t4_runtime.png) | ![T4 Details](./images/tesla_t4_details.png) |
+| **L4**     | ![L4 Runtime](./images/l4_runtime.png) | ![L4 Details](./images/l4_details.png) |
+| **A100**   | ![A100 Runtime](./images/a100_runtime.png) | ![A100 Details](./images/a100_details.png) |
+| **Jetson Orin Nano Super**   | ![Jetson Runtime](./images/jetson_runtime.png) | ![Jetson Details](./images/jetson_details.png) |
+
 ## 📚 Documentation
 
 The project includes comprehensive Sphinx documentation. To generate the HTML documentation:

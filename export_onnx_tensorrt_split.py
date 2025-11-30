@@ -135,7 +135,7 @@ def main():
     bs = 1
     seq_len = vars["SRC_SEQ_LEN"] # e.g., 350
     d_model = vars["D_MODEL"]     # e.g., 512
-    USE_FP16 = False
+    USE_FP16 = True
 
     # ==========================================================================
     # ENCODER
@@ -165,7 +165,7 @@ def main():
         min_shapes="src:1x1,src_mask:1x1x1x1",
         opt_shapes=f"src:1x{seq_len},src_mask:1x1x{seq_len}x{seq_len}",
         max_shapes=f"src:8x{seq_len},src_mask:8x1x{seq_len}x{seq_len}",
-        use_fp16 = USE_FP16 
+        use_fp16 = False #USE_FP16 # Forcing the encoder to be fp32 due to accuracy 
     )
 
     # ==========================================================================

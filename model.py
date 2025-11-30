@@ -211,7 +211,7 @@ class MultiHeadAttentionBlock(nn.Module):
         # We need to apply mask before softmax so that wherever the mask value is 0 we put -1e9 in attention
         # thus the softmax will result in 0 i.e. no attention between the tokens
         if mask is not None:
-            attention_scores.masked_fill_(mask == 0, -1e9)
+            attention_scores.masked_fill_(mask == 0, -1e4) # -1e4 needed for the fp16 conversion with TensorRT
 
         attention_scores = attention_scores.softmax(dim = -1) # (batch, h, seq_len, seq_len)
         if dropout is not None:

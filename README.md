@@ -7,6 +7,7 @@
 ![OS](https://img.shields.io/badge/OS-Linux-lightgrey.svg)
 ![Platform](https://img.shields.io/badge/Platform-Jetson%20Nano-yellow.svg)
 
+![main_image](images/translation_transformer_with_diagram.png)
 A complete PyTorch implementation of the Transformer architecture from the paper ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) for machine translation tasks. This repository provides a clean, well-documented implementation suitable for learning and research purposes, with special optimizations for NVIDIA Jetson Nano devices.
 
 ## 📋 Overview
